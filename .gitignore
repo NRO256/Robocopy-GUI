@@ -1,0 +1,5 @@
+/target/
+Robocopy-GUI_config.json
+logs/
+*.log
+*.tmp

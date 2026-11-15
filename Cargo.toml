@@ -1,0 +1,26 @@
+[package]
+name = "robocopy-gui"
+version = "0.1.0"
+authors = ["NRO / Antigravity"]
+edition = "2024"
+description = "Portable Win32 GUI Wrapper for Windows robocopy.exe"
+license = "MIT"
+
+[lib]
+name = "robocopy_gui_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "Robocopy-GUI"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
