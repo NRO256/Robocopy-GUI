@@ -90,13 +90,18 @@ impl PathInspector for FallbackPathInspector {
 /// 比較用の簡易正規化（`\\?\` プレフィックス除去、末尾 `\.` や `\` 整理）。
 pub fn normalize_for_compare(raw: &str) -> String {
     let mut s = raw.trim().replace('/', "\\");
-    if let Some(stripped) = s.strip_prefix("\\\\?\\UNC\\") {
-        s = format!("\\\\{stripped}");
+    if s.get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("\\\\?\\UNC\\"))
+    {
+        s = format!("\\\\{}", &s[8..]);
     } else if let Some(stripped) = s.strip_prefix("\\\\?\\") {
         s = stripped.to_string();
     }
     if s.ends_with("\\.") && s.len() == 4 && s.as_bytes()[1] == b':' {
         s.pop(); // "D:\." -> "D:\"
+    }
+    if s.len() == 2 && s.as_bytes()[0].is_ascii_alphabetic() && s.as_bytes()[1] == b':' {
+        s.push('\\'); // "D:" -> "D:\"
     }
     let bytes = s.as_bytes();
     let is_drive_root =
@@ -196,10 +201,11 @@ pub fn validate_execution_plan(
             };
 
         if spec.has_destructive_flags && !plan.is_dry_run {
-            let mode_note = if spec.has_mirror_or_purge {
-                "/MIR・/PURGE（コピー先の余分ファイル削除）"
-            } else {
-                "/MOVE・/MOV（コピー元ファイル削除）"
+            let mode_note = match (spec.has_mirror_or_purge, spec.has_move_flags) {
+                (true, true) => "/MIR・/PURGE および /MOVE・/MOV（コピー先・元の双方で削除発生）",
+                (true, false) => "/MIR・/PURGE（コピー先の余分ファイル削除）",
+                (false, true) => "/MOVE・/MOV（コピー元ファイル削除）",
+                (false, false) => unreachable!(),
             };
             result.destructive_summaries.push(format!(
                 "{job_label}{mode_note}: {} -> {}",
@@ -281,6 +287,15 @@ pub fn validate_single_profile(
     }
 
     if spec.has_destructive_flags {
+        if spec.has_move_flags && inspector.is_critical_system_dir(&src_canon) {
+            return Err((
+                FocusField::Source,
+                format!(
+                    "ドライブ直下・共有ルート・システム重要フォルダからの移動 (/MOVE /MOV) は禁止されています: {}",
+                    spec.normalized_source
+                ),
+            ));
+        }
         if inspector.is_critical_system_dir(&dst_canon) {
             return Err((
                 FocusField::Destination,
@@ -413,5 +428,65 @@ mod tests {
         assert!(validate_single_profile(&p, false, &inspector, true).is_ok());
 
         let _ = std::fs::remove_dir_all(src.parent().unwrap());
+    }
+
+    #[test]
+    fn normalize_for_compare_unifies_drive_colon_and_drive_root() {
+        let inspector = FallbackPathInspector;
+        assert_eq!(normalize_for_compare("D:"), "D:\\");
+        assert_eq!(normalize_for_compare("D:\\."), "D:\\");
+        assert_eq!(
+            normalize_for_compare("\\\\?\\unc\\NAS\\Share\\"),
+            "\\\\NAS\\Share"
+        );
+        assert!(inspector.paths_equal_ci("D:", "D:\\"));
+        assert!(inspector.paths_equal_ci("d:\\.", "D:\\"));
+    }
+
+    struct ExistingDirMockInspector;
+
+    impl PathInspector for ExistingDirMockInspector {
+        fn dir_exists(&self, _path: &str) -> bool {
+            true
+        }
+        fn is_dir_empty(&self, _path: &str) -> Option<bool> {
+            Some(false)
+        }
+        fn resolve_canonical_path(&self, path: &str) -> Result<String, String> {
+            FallbackPathInspector.resolve_canonical_path(path)
+        }
+        fn paths_equal_ci(&self, a: &str, b: &str) -> bool {
+            FallbackPathInspector.paths_equal_ci(a, b)
+        }
+        fn is_ancestor_ci(&self, ancestor: &str, child: &str) -> bool {
+            FallbackPathInspector.is_ancestor_ci(ancestor, child)
+        }
+        fn is_critical_system_dir(&self, canonical_path: &str) -> bool {
+            FallbackPathInspector.is_critical_system_dir(canonical_path)
+        }
+    }
+
+    #[test]
+    fn rejects_move_from_drive_root_or_unc_root() {
+        let inspector = ExistingDirMockInspector;
+        let p_drive = BackupProfile {
+            source: "D:\\".into(),
+            destination: "C:\\Backup\\D_Drive".into(),
+            copy_mode: CopyMode::Move,
+            ..Default::default()
+        };
+        let err_drive = validate_single_profile(&p_drive, false, &inspector, false)
+            .expect_err("drive root move source must fail");
+        assert_eq!(err_drive.0, FocusField::Source);
+
+        let p_unc = BackupProfile {
+            source: "\\\\NAS\\Share".into(),
+            destination: "C:\\Backup\\NasShare".into(),
+            copy_mode: CopyMode::Move,
+            ..Default::default()
+        };
+        let err_unc = validate_single_profile(&p_unc, false, &inspector, false)
+            .expect_err("UNC root move source must fail");
+        assert_eq!(err_unc.0, FocusField::Source);
     }
 }

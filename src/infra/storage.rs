@@ -42,19 +42,21 @@ pub fn load_config(path: &Path) -> (AppConfig, Option<String>) {
         return (AppConfig::default(), None);
     }
     match fs::read_to_string(path) {
-        Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-            Ok(mut cfg) => {
-                cfg.sanitize();
-                (cfg, None)
+        Ok(content) => {
+            match serde_json::from_str::<AppConfig>(content.trim_start_matches('\u{FEFF}')) {
+                Ok(mut cfg) => {
+                    cfg.sanitize();
+                    (cfg, None)
+                }
+                Err(e) => (
+                    AppConfig::default(),
+                    Some(format!(
+                        "設定ファイルの解析に失敗したため既定設定で起動しました ({}): {e}",
+                        path.display()
+                    )),
+                ),
             }
-            Err(e) => (
-                AppConfig::default(),
-                Some(format!(
-                    "設定ファイルの解析に失敗したため既定設定で起動しました ({}): {e}",
-                    path.display()
-                )),
-            ),
-        },
+        }
         Err(e) => (
             AppConfig::default(),
             Some(format!(
@@ -123,7 +125,7 @@ pub fn write_handoff_config(config: &AppConfig) -> Result<PathBuf, String> {
 pub fn load_and_cleanup_handoff(path: &Path) -> Option<AppConfig> {
     let content = fs::read_to_string(path).ok()?;
     let _ = fs::remove_file(path);
-    let mut cfg = serde_json::from_str::<AppConfig>(&content).ok()?;
+    let mut cfg = serde_json::from_str::<AppConfig>(content.trim_start_matches('\u{FEFF}')).ok()?;
     cfg.sanitize();
     Some(cfg)
 }

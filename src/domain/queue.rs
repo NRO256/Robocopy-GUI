@@ -145,6 +145,30 @@ impl ExecutionPlan {
         }
     }
 
+    /// キュー内の指定1ジョブを実行計画として構築する。
+    pub fn single_queue_item(
+        queue_index: usize,
+        item: &QueueItem,
+        is_dry_run: bool,
+        shutdown_after_completion: bool,
+    ) -> Self {
+        Self {
+            is_dry_run,
+            is_queue_mode: false,
+            continue_on_error: false,
+            shutdown_after_completion: if is_dry_run {
+                false
+            } else {
+                shutdown_after_completion
+            },
+            jobs: vec![PlannedJob {
+                queue_index: Some(queue_index),
+                display_name: item.name.clone(),
+                profile: item.profile.clone(),
+            }],
+        }
+    }
+
     /// 有効化されたキュー項目から実行計画を構築する。
     pub fn from_queue(
         queue: &[QueueItem],
@@ -215,5 +239,22 @@ mod tests {
         assert_eq!(plan.jobs[0].queue_index, Some(1));
         assert_eq!(plan.jobs[1].queue_index, Some(2));
         assert!(plan.shutdown_after_completion);
+    }
+
+    #[test]
+    fn single_queue_item_targets_only_selected_index() {
+        let item = QueueItem {
+            id: 10,
+            enabled: false,
+            name: "個別実行".into(),
+            ..Default::default()
+        };
+        let plan = ExecutionPlan::single_queue_item(2, &item, true, true);
+        assert!(plan.is_dry_run);
+        assert!(!plan.is_queue_mode);
+        assert!(!plan.shutdown_after_completion);
+        assert_eq!(plan.jobs.len(), 1);
+        assert_eq!(plan.jobs[0].queue_index, Some(2));
+        assert_eq!(plan.jobs[0].display_name, "個別実行");
     }
 }

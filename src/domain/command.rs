@@ -24,6 +24,8 @@ pub struct CommandSpec {
     pub has_destructive_flags: bool,
     /// `/MIR` または `/PURGE`（コピー先削除系）を含むか。
     pub has_mirror_or_purge: bool,
+    /// `/MOVE` または `/MOV`（コピー元削除系）を含むか。
+    pub has_move_flags: bool,
     /// `/B`（純粋バックアップ権限）を含むか。
     pub uses_backup_only_privilege: bool,
     /// `/ZB`（フォールバック付きバックアップ権限）を含むか。
@@ -36,21 +38,31 @@ pub struct CommandSpec {
 /// - UNCルート `\\server\share\` は `\\server\share` へ正規化する。
 pub fn normalize_robocopy_path(raw: &str) -> String {
     let trimmed = raw.trim();
-    let unquoted = trimmed
+    let mut unquoted = trimmed
         .strip_prefix('"')
         .and_then(|s| s.strip_suffix('"'))
         .unwrap_or(trimmed)
-        .trim();
+        .trim()
+        .replace('/', "\\");
 
     if unquoted.is_empty() {
         return String::new();
+    }
+
+    if unquoted
+        .get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("\\\\?\\UNC\\"))
+    {
+        unquoted = format!("\\\\{}", &unquoted[8..]);
+    } else if let Some(stripped) = unquoted.strip_prefix("\\\\?\\") {
+        unquoted = stripped.to_string();
     }
 
     let bytes = unquoted.as_bytes();
     // ドライブ指定: "D:", "D:\", "D:/", "D:\\\"
     if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
         let rest = &unquoted[2..];
-        let rest_trimmed = rest.trim_end_matches(['\\', '/']);
+        let rest_trimmed = rest.trim_end_matches('\\');
         if rest_trimmed.is_empty() || rest_trimmed == "." {
             let drive_char = unquoted.chars().next().unwrap_or('C');
             return format!("{drive_char}:\\.");
@@ -59,11 +71,11 @@ pub fn normalize_robocopy_path(raw: &str) -> String {
 
     // UNCルート判定: \\server\share\ -> \\server\share
     if let Some(unc_body) = unquoted.strip_prefix("\\\\") {
-        let cleaned = unc_body.trim_end_matches(['\\', '/']);
+        let cleaned = unc_body.trim_end_matches('\\');
         return format!("\\\\{cleaned}");
     }
 
-    unquoted.trim_end_matches(['\\', '/']).to_string()
+    unquoted.trim_end_matches('\\').to_string()
 }
 
 /// `/XD` 用の区切りパーサ（空白を含むフォルダ名を壊さないよう `;` と改行のみで分割）。
@@ -115,6 +127,69 @@ pub fn parse_xf_items(raw: &str) -> Vec<String> {
         items.push(t.to_string());
     }
     items
+}
+
+fn parse_exclusion_items(raw: &str, is_xd: bool) -> Vec<String> {
+    if is_xd {
+        parse_xd_items(raw)
+    } else {
+        parse_xf_items(raw)
+    }
+}
+
+/// 除外設定欄に指定トークンが含まれているか判定する（大文字小文字無視）。
+pub fn has_exclusion_token(raw: &str, token: &str, is_xd: bool) -> bool {
+    parse_exclusion_items(raw, is_xd)
+        .iter()
+        .any(|x| x.eq_ignore_ascii_case(token))
+}
+
+/// 除外設定欄のトークンをトグルし、更新後の文字列と「追加されたか(true)/削除されたか(false)」を返す。
+pub fn toggle_exclusion_token(raw: &str, token: &str, is_xd: bool) -> (String, bool) {
+    let mut items = parse_exclusion_items(raw, is_xd);
+    let existed = items.iter().any(|x| x.eq_ignore_ascii_case(token));
+    if existed {
+        items.retain(|x| !x.eq_ignore_ascii_case(token));
+    } else {
+        items.push(token.to_string());
+    }
+    let formatted: Vec<String> = items
+        .into_iter()
+        .map(|item| {
+            if !is_xd && item.contains([' ', '\t']) {
+                format!("\"{item}\"")
+            } else {
+                item
+            }
+        })
+        .collect();
+    (formatted.join(";"), !existed)
+}
+
+fn extract_path_leaf(raw: &str) -> Option<String> {
+    let norm = normalize_robocopy_path(raw);
+    if norm.is_empty() {
+        return None;
+    }
+    if let Some(drive_only) = norm.strip_suffix("\\.")
+        && drive_only.len() == 2
+    {
+        return Some(drive_only.to_string());
+    }
+    norm.rsplit(['\\', '/'])
+        .find(|s| !s.is_empty())
+        .map(str::to_string)
+        .or(Some(norm))
+}
+
+/// コピー元・先のパスから分かりやすいジョブ名を自動生成する。
+pub fn suggest_job_name(source: &str, destination: &str, fallback_id: u64) -> String {
+    match (extract_path_leaf(source), extract_path_leaf(destination)) {
+        (Some(s), Some(d)) => format!("{s} -> {d}"),
+        (Some(s), None) => s,
+        (None, Some(d)) => d,
+        (None, None) => format!("ジョブ {fallback_id}"),
+    }
 }
 
 /// 追加カスタム引数を引用符対応でトークン分割する。
@@ -192,10 +267,18 @@ pub fn format_bat_arg(arg: &str) -> Result<String, String> {
     let pct_escaped = arg.replace('%', "%%");
     let needs_quotes = pct_escaped.is_empty()
         || pct_escaped.contains([
-            ' ', '\t', '&', '|', '<', '>', '^', '!', '(', ')', ';', ',', '%',
+            ' ', '\t', '&', '|', '<', '>', '^', '!', '(', ')', ';', ',', '%', '=', '~',
         ]);
     if needs_quotes {
-        Ok(format!("\"{pct_escaped}\""))
+        let trailing_bs = pct_escaped.chars().rev().take_while(|&c| c == '\\').count();
+        let mut quoted = String::with_capacity(pct_escaped.len() + trailing_bs + 2);
+        quoted.push('"');
+        quoted.push_str(&pct_escaped);
+        for _ in 0..trailing_bs {
+            quoted.push('\\');
+        }
+        quoted.push('"');
+        Ok(quoted)
     } else {
         Ok(pct_escaped)
     }
@@ -216,10 +299,29 @@ pub fn build_command_spec(
         })?;
 
     let mut custom_has_copy = false;
-    let mut custom_has_destructive = false;
     let mut custom_has_mirror_or_purge = false;
+    let mut custom_has_move = false;
     let mut custom_has_b = false;
     let mut custom_has_zb = false;
+    let mut custom_has_mt = false;
+    let mut custom_has_r = false;
+    let mut custom_has_w = false;
+
+    for tok in &custom_tokens {
+        if let Some(key) = extract_switch_key(tok) {
+            match key.as_str() {
+                "MT" => custom_has_mt = true,
+                "R" => custom_has_r = true,
+                "W" => custom_has_w = true,
+                "MIR" | "PURGE" => custom_has_mirror_or_purge = true,
+                "MOVE" | "MOV" => custom_has_move = true,
+                "B" => custom_has_b = true,
+                "ZB" => custom_has_zb = true,
+                "COPY" | "COPYALL" | "NOCOPY" => custom_has_copy = true,
+                _ => {}
+            }
+        }
+    }
 
     for tok in &custom_tokens {
         if let Some(key) = extract_switch_key(tok) {
@@ -259,7 +361,7 @@ pub fn build_command_spec(
                         is_extra_args_error: true,
                     });
                 }
-                "IPG" | "EFSRAW" | "LFSM" if profile.multithread_enabled => {
+                "IPG" | "EFSRAW" | "LFSM" if profile.multithread_enabled || custom_has_mt => {
                     return Err(CommandBuildError {
                         message: format!(
                             "/{key} はマルチスレッド (/MT) と併用できません。/MT を無効にするか /{key} を削除してください。"
@@ -267,16 +369,6 @@ pub fn build_command_spec(
                         is_extra_args_error: true,
                     });
                 }
-                "MIR" | "PURGE" => {
-                    custom_has_destructive = true;
-                    custom_has_mirror_or_purge = true;
-                }
-                "MOVE" | "MOV" => {
-                    custom_has_destructive = true;
-                }
-                "B" => custom_has_b = true,
-                "ZB" => custom_has_zb = true,
-                "COPY" | "COPYALL" | "NOCOPY" => custom_has_copy = true,
                 _ => {}
             }
         }
@@ -358,12 +450,16 @@ pub fn build_command_spec(
     }
 
     // パフォーマンス・リトライ
-    if profile.multithread_enabled {
+    if profile.multithread_enabled && !custom_has_mt {
         let mt = profile.multithread_count.clamp(1, 128);
         args.push(format!("/MT:{mt}"));
     }
-    args.push(format!("/R:{}", profile.retry_count));
-    args.push(format!("/W:{}", profile.wait_seconds));
+    if !custom_has_r {
+        args.push(format!("/R:{}", profile.retry_count));
+    }
+    if !custom_has_w {
+        args.push(format!("/W:{}", profile.wait_seconds));
+    }
 
     if profile.no_progress {
         args.push("/NP".to_string());
@@ -385,7 +481,8 @@ pub fn build_command_spec(
 
     let has_mirror_or_purge =
         matches!(profile.copy_mode, CopyMode::Mirror) || custom_has_mirror_or_purge;
-    let has_destructive_flags = profile.copy_mode.is_destructive() || custom_has_destructive;
+    let has_move_flags = matches!(profile.copy_mode, CopyMode::Move) || custom_has_move;
+    let has_destructive_flags = has_mirror_or_purge || has_move_flags;
     let uses_backup_only_privilege =
         (matches!(profile.backup_mode, BackupPrivilegeMode::BackupOnly) && !profile.restartable)
             || custom_has_b;
@@ -403,6 +500,7 @@ pub fn build_command_spec(
         normalized_dest: dst,
         has_destructive_flags,
         has_mirror_or_purge,
+        has_move_flags,
         uses_backup_only_privilege,
         uses_zb_privilege,
     })
@@ -495,6 +593,16 @@ mod tests {
             normalize_robocopy_path("\\\\NAS\\Share\\Bak\\"),
             "\\\\NAS\\Share\\Bak"
         );
+        assert_eq!(normalize_robocopy_path("\\\\?\\D:\\"), "D:\\.");
+        assert_eq!(
+            normalize_robocopy_path("\\\\?\\UNC\\NAS\\Share\\"),
+            "\\\\NAS\\Share"
+        );
+        assert_eq!(
+            normalize_robocopy_path("\\\\?\\unc\\NAS\\Share\\Sub/"),
+            "\\\\NAS\\Share\\Sub"
+        );
+        assert_eq!(normalize_robocopy_path("C:/Src/Sub/"), "C:\\Src\\Sub");
     }
 
     #[test]
@@ -531,6 +639,29 @@ mod tests {
 
         p.multithread_enabled = false;
         assert!(build_command_spec(&p, false).is_ok());
+
+        p.extra_args = "/MT:16 /IPG:10".into();
+        assert!(build_command_spec(&p, false).is_err());
+
+        p.extra_args = "/IPG:10 /MT:16".into();
+        assert!(build_command_spec(&p, false).is_err());
+    }
+
+    #[test]
+    fn custom_args_overrides_mt_r_w_without_duplication_and_sets_move_flag() {
+        let p = BackupProfile {
+            source: "C:\\Src".into(),
+            destination: "D:\\Dst".into(),
+            extra_args: "/MT:16 /R:0 /W:1 /MOV".into(),
+            ..Default::default()
+        };
+        let spec = build_command_spec(&p, false).expect("valid command");
+        assert!(spec.has_destructive_flags);
+        assert!(spec.has_move_flags);
+        assert!(!spec.has_mirror_or_purge);
+        assert_eq!(spec.args.iter().filter(|a| a.starts_with("/MT")).count(), 1);
+        assert_eq!(spec.args.iter().filter(|a| a.starts_with("/R:")).count(), 1);
+        assert_eq!(spec.args.iter().filter(|a| a.starts_with("/W:")).count(), 1);
     }
 
     #[test]
@@ -544,6 +675,7 @@ mod tests {
         let spec = build_command_spec(&p, false).expect("valid command");
         assert!(spec.has_destructive_flags);
         assert!(spec.has_mirror_or_purge);
+        assert!(!spec.has_move_flags);
         assert!(!spec.args.iter().any(|a| a == "/COPY:DAT"));
     }
 
@@ -551,9 +683,14 @@ mod tests {
     fn bat_export_escapes_percent_quotes_metachars_and_rejects_newlines() {
         assert_eq!(format_bat_arg("C:\\My & Dir").unwrap(), "\"C:\\My & Dir\"");
         assert_eq!(
+            format_bat_arg("C:\\My Dir\\").unwrap(),
+            "\"C:\\My Dir\\\\\""
+        );
+        assert_eq!(
             format_bat_arg("C:\\%TEMP%\\a").unwrap(),
             "\"C:\\%%TEMP%%\\a\""
         );
+        assert_eq!(format_bat_arg("C:\\a=b\\~1").unwrap(), "\"C:\\a=b\\~1\"");
         assert!(format_bat_arg("bad\nline").is_err());
 
         let p = BackupProfile {
@@ -565,5 +702,33 @@ mod tests {
         let bat = build_bat_script(&[("ジョブ1", &p)], false, false, true).expect("bat");
         assert!(bat.starts_with("@echo off\r\nchcp 65001 > nul\r\n"));
         assert!(bat.contains("\"C:\\Src & Test\" D:\\."));
+    }
+
+    #[test]
+    fn toggle_exclusion_token_adds_and_removes_case_insensitively() {
+        assert!(!has_exclusion_token(".git;target", "node_modules", true));
+        assert!(has_exclusion_token(".GIT;target", ".git", true));
+
+        let (added, is_added) = toggle_exclusion_token(".git", "node_modules", true);
+        assert!(is_added);
+        assert_eq!(added, ".git;node_modules");
+
+        let (removed, is_added2) = toggle_exclusion_token(".GIT;node_modules", ".git", true);
+        assert!(!is_added2);
+        assert_eq!(removed, "node_modules");
+
+        let (xf_added, ok) = toggle_exclusion_token("*.tmp;\"my log.txt\"", "*.bak", false);
+        assert!(ok);
+        assert_eq!(xf_added, "*.tmp;\"my log.txt\";*.bak");
+    }
+
+    #[test]
+    fn suggest_job_name_formats_leaves_drive_roots_and_fallbacks() {
+        assert_eq!(
+            suggest_job_name(r"C:\Users\Example\Documents", r"D:\", 3),
+            "Documents -> D:"
+        );
+        assert_eq!(suggest_job_name(r"\\NAS\Share\Photos", r"", 2), "Photos");
+        assert_eq!(suggest_job_name("", "", 5), "ジョブ 5");
     }
 }

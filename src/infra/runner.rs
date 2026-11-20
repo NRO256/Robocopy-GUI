@@ -1,5 +1,5 @@
-use std::fs::OpenOptions;
-use std::io::{Read, Seek, SeekFrom};
+use std::fs::{File, OpenOptions};
+use std::io::Read;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
@@ -33,13 +33,17 @@ pub struct Utf16LeStreamDecoder {
 
 impl Utf16LeStreamDecoder {
     pub fn push_bytes(&mut self, bytes: &[u8]) -> Vec<String> {
-        let mut combined: Vec<u8> = Vec::with_capacity(bytes.len() + 1);
-        if let Some(b) = self.pending_byte.take() {
-            combined.push(b);
-        }
-        combined.extend_from_slice(bytes);
+        let combined;
+        let mut slice = if let Some(b) = self.pending_byte.take() {
+            let mut v = Vec::with_capacity(bytes.len() + 1);
+            v.push(b);
+            v.extend_from_slice(bytes);
+            combined = v;
+            combined.as_slice()
+        } else {
+            bytes
+        };
 
-        let mut slice = combined.as_slice();
         if !self.bom_checked && slice.len() >= 2 {
             self.bom_checked = true;
             if slice[0] == 0xFF && slice[1] == 0xFE {
@@ -325,6 +329,8 @@ fn run_robocopy_blocking(
     let out_thread = thread::spawn(move || drain_pipe(out_read, &stdout_buf_c));
 
     let mut decoder = Utf16LeStreamDecoder::default();
+    let mut unilog_file: Option<File> = None;
+    let mut read_buf = Vec::with_capacity(8192);
     let mut read_offset: u64 = 0;
 
     loop {
@@ -339,7 +345,13 @@ fn run_robocopy_blocking(
             }
         }
 
-        let new_lines = poll_unilog_lines(&temp_log_path, &mut read_offset, &mut decoder);
+        let new_lines = poll_unilog_lines(
+            &temp_log_path,
+            &mut unilog_file,
+            &mut read_buf,
+            &mut read_offset,
+            &mut decoder,
+        );
         if !new_lines.is_empty() {
             let _ = tx.send(RunnerEvent::LogLines(new_lines));
             unsafe {
@@ -357,43 +369,41 @@ fn run_robocopy_blocking(
     let _ = out_thread.join();
     cancel_handle.job_handle.store(0, Ordering::SeqCst);
 
-    // 終了後の残余ログを取り切る
-    let mut tail_lines = poll_unilog_lines(&temp_log_path, &mut read_offset, &mut decoder);
+    // 終了後の残余ログを取り切り、一時ファイル削除前にハンドルを明示解放する
+    let mut tail_lines = poll_unilog_lines(
+        &temp_log_path,
+        &mut unilog_file,
+        &mut read_buf,
+        &mut read_offset,
+        &mut decoder,
+    );
+    drop(unilog_file);
     tail_lines.extend(decoder.finish());
+
+    if read_offset == 0
+        && tail_lines.is_empty()
+        && let Ok(bytes) = stdout_buf.lock()
+        && !bytes.is_empty()
+    {
+        let s = decode_acp_or_utf8(&bytes);
+        for l in s.lines() {
+            if !l.trim().is_empty() {
+                tail_lines.push(l.to_string());
+            }
+        }
+    }
+    if let Ok(bytes) = stderr_buf.lock()
+        && !bytes.is_empty()
+    {
+        let s = decode_acp_or_utf8(&bytes);
+        for l in s.lines() {
+            if !l.trim().is_empty() {
+                tail_lines.push(format!("[stderr] {l}"));
+            }
+        }
+    }
     if !tail_lines.is_empty() {
         let _ = tx.send(RunnerEvent::LogLines(tail_lines));
-        unsafe {
-            PostMessageW(hwnd_notify, wm_notify, 0, 0);
-        }
-    } else {
-        // /UNILOG が作られる前に終了した場合、stderr/stdout パイプを復号して出力する
-        let mut fallback_lines = Vec::new();
-        if let Ok(bytes) = stdout_buf.lock()
-            && !bytes.is_empty()
-        {
-            let s = decode_acp_or_utf8(&bytes);
-            for l in s.lines() {
-                if !l.trim().is_empty() {
-                    fallback_lines.push(l.to_string());
-                }
-            }
-        }
-        if let Ok(bytes) = stderr_buf.lock()
-            && !bytes.is_empty()
-        {
-            let s = decode_acp_or_utf8(&bytes);
-            for l in s.lines() {
-                if !l.trim().is_empty() {
-                    fallback_lines.push(format!("[stderr] {l}"));
-                }
-            }
-        }
-        if !fallback_lines.is_empty() {
-            let _ = tx.send(RunnerEvent::LogLines(fallback_lines));
-            unsafe {
-                PostMessageW(hwnd_notify, wm_notify, 0, 0);
-            }
-        }
     }
 
     if cancel_handle.cancelled.load(Ordering::SeqCst) {
@@ -431,26 +441,31 @@ fn drain_pipe(pipe_read: HANDLE, sink: &Arc<std::sync::Mutex<Vec<u8>>>) {
 
 fn poll_unilog_lines(
     path: &Path,
+    file_opt: &mut Option<File>,
+    read_buf: &mut Vec<u8>,
     offset: &mut u64,
     decoder: &mut Utf16LeStreamDecoder,
 ) -> Vec<String> {
-    let Ok(mut file) = OpenOptions::new()
-        .read(true)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-        .open(path)
-    else {
+    if file_opt.is_none() {
+        let Ok(file) = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .open(path)
+        else {
+            return Vec::new();
+        };
+        *file_opt = Some(file);
+    }
+
+    let Some(file) = file_opt.as_mut() else {
         return Vec::new();
     };
-
-    if file.seek(SeekFrom::Start(*offset)).is_err() {
+    read_buf.clear();
+    if file.read_to_end(read_buf).is_err() || read_buf.is_empty() {
         return Vec::new();
     }
-    let mut buf = Vec::new();
-    if file.read_to_end(&mut buf).is_err() || buf.is_empty() {
-        return Vec::new();
-    }
-    *offset += buf.len() as u64;
-    decoder.push_bytes(&buf)
+    *offset += read_buf.len() as u64;
+    decoder.push_bytes(read_buf)
 }
 
 fn decode_acp_or_utf8(bytes: &[u8]) -> String {

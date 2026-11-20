@@ -1,10 +1,5 @@
 #![allow(clippy::upper_case_acronyms)]
-#![allow(
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    dead_code
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
 use std::ffi::c_void;
 
@@ -15,7 +10,6 @@ pub type DWORD = u32;
 pub type UINT = u32;
 pub type INT = i32;
 pub type LONG = i32;
-pub type ULONG = u32;
 pub type HRESULT = i32;
 pub type WPARAM = usize;
 pub type LPARAM = isize;
@@ -30,20 +24,17 @@ pub type HBRUSH = isize;
 pub type HFONT = isize;
 pub type HDC = isize;
 pub type HANDLE = isize;
-pub type HLOCAL = isize;
 pub type HGLOBAL = isize;
+pub type HDROP = isize;
 pub type COLORREF = u32;
 
 pub const FALSE: BOOL = 0;
 pub const TRUE: BOOL = 1;
 pub const INVALID_HANDLE_VALUE: HANDLE = -1;
 pub const ERROR_ALREADY_EXISTS: DWORD = 183;
-pub const ERROR_ACCESS_DENIED: DWORD = 5;
-pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_OBJECT_0: DWORD = 0;
 
 pub const CP_ACP: UINT = 0;
-pub const CP_UTF8: UINT = 65001;
 
 // Window / Class styles
 pub const CS_HREDRAW: UINT = 0x0002;
@@ -59,7 +50,6 @@ pub const WS_THICKFRAME: DWORD = 0x0004_0000;
 pub const WS_OVERLAPPEDWINDOW: DWORD =
     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 pub const WS_VISIBLE: DWORD = 0x1000_0000;
-pub const WS_DISABLED: DWORD = 0x0800_0000;
 pub const WS_CLIPCHILDREN: DWORD = 0x0200_0000;
 pub const WS_CLIPSIBLINGS: DWORD = 0x0400_0000;
 pub const WS_TABSTOP: DWORD = 0x0001_0000;
@@ -86,21 +76,21 @@ pub const BN_CLICKED: WORD = 0;
 
 pub const SS_LEFT: DWORD = 0x0000_0000;
 pub const SS_NOPREFIX: DWORD = 0x0000_0080;
-pub const SS_ETCHEDHORZ: DWORD = 0x0000_0010;
 
-pub const ES_LEFT: DWORD = 0x0000;
 pub const ES_MULTILINE: DWORD = 0x0004;
 pub const ES_AUTOVSCROLL: DWORD = 0x0040;
 pub const ES_AUTOHSCROLL: DWORD = 0x0080;
 pub const ES_READONLY: DWORD = 0x0800;
 pub const ES_NUMBER: DWORD = 0x2000;
 pub const EN_CHANGE: WORD = 0x0300;
+pub const EM_GETSEL: UINT = 0x00B0;
 pub const EM_SETSEL: UINT = 0x00B1;
 pub const EM_REPLACESEL: UINT = 0x00C2;
 pub const EM_GETLINECOUNT: UINT = 0x00BA;
 pub const EM_LINEINDEX: UINT = 0x00BB;
 pub const EM_SETLIMITTEXT: UINT = 0x00C5;
 pub const EM_SCROLLCARET: UINT = 0x00B7;
+pub const EM_SETCUEBANNER: UINT = 0x1501;
 
 pub const CBS_DROPDOWNLIST: DWORD = 0x0003;
 pub const CBN_SELCHANGE: WORD = 1;
@@ -108,8 +98,6 @@ pub const CB_ADDSTRING: UINT = 0x0143;
 pub const CB_RESETCONTENT: UINT = 0x014B;
 pub const CB_GETCURSEL: UINT = 0x0147;
 pub const CB_SETCURSEL: UINT = 0x014E;
-pub const CB_SHOWDROPDOWN: UINT = 0x014F;
-pub const CB_GETDROPPEDSTATE: UINT = 0x0157;
 
 // Tab control
 pub const TCM_INSERTITEMW: UINT = 0x133E;
@@ -126,16 +114,20 @@ pub const LVS_SHOWSELALWAYS: DWORD = 0x0008;
 pub const LVS_EX_GRIDLINES: DWORD = 0x0000_0001;
 pub const LVS_EX_CHECKBOXES: DWORD = 0x0000_0004;
 pub const LVS_EX_FULLROWSELECT: DWORD = 0x0000_0020;
+pub const LVS_EX_DOUBLEBUFFER: DWORD = 0x0001_0000;
 pub const LVM_FIRST: UINT = 0x1000;
 pub const LVM_DELETEALLITEMS: UINT = LVM_FIRST + 9;
 pub const LVM_GETNEXTITEM: UINT = LVM_FIRST + 12;
+pub const LVM_SETCOLUMNWIDTH: UINT = LVM_FIRST + 30;
 pub const LVM_SETITEMSTATE: UINT = LVM_FIRST + 43;
-pub const LVM_GETITEMSTATE: UINT = LVM_FIRST + 44;
 pub const LVM_SETEXTENDEDLISTVIEWSTYLE: UINT = LVM_FIRST + 54;
 pub const LVM_INSERTITEMW: UINT = LVM_FIRST + 77;
 pub const LVM_SETITEMTEXTW: UINT = LVM_FIRST + 116;
 pub const LVM_INSERTCOLUMNW: UINT = LVM_FIRST + 97;
+pub const LVM_GETITEMRECT: UINT = LVM_FIRST + 14;
+pub const LVM_HITTEST: UINT = LVM_FIRST + 18;
 pub const LVM_ENSUREVISIBLE: UINT = LVM_FIRST + 19;
+pub const LVIR_BOUNDS: INT = 0;
 pub const LVNI_SELECTED: LPARAM = 0x0002;
 pub const LVIF_TEXT: UINT = 0x0001;
 pub const LVIF_STATE: UINT = 0x0008;
@@ -146,43 +138,56 @@ pub const LVCFMT_LEFT: INT = 0x0000;
 pub const LVIS_SELECTED: UINT = 0x0002;
 pub const LVIS_FOCUSED: UINT = 0x0001;
 pub const LVIS_STATEIMAGEMASK: UINT = 0xF000;
+pub const NM_DBLCLK: u32 = (-3_i32) as u32;
 pub const LVN_ITEMCHANGED: u32 = (-101_i32) as u32;
+pub const LVN_KEYDOWN: u32 = (-155_i32) as u32;
 
 // Messages
 pub const WM_CREATE: UINT = 0x0001;
 pub const WM_DESTROY: UINT = 0x0002;
 pub const WM_SIZE: UINT = 0x0005;
-pub const WM_SETFOCUS: UINT = 0x0007;
 pub const WM_CLOSE: UINT = 0x0010;
-pub const WM_ENABLE: UINT = 0x000A;
 pub const WM_SETFONT: UINT = 0x0030;
+pub const WM_SETICON: UINT = 0x0080;
 pub const WM_GETMINMAXINFO: UINT = 0x0024;
 pub const WM_NOTIFY: UINT = 0x004E;
+pub const WM_CONTEXTMENU: UINT = 0x007B;
 pub const WM_KEYDOWN: UINT = 0x0100;
 pub const WM_COMMAND: UINT = 0x0111;
 pub const WM_TIMER: UINT = 0x0113;
+pub const WM_CTLCOLOREDIT: UINT = 0x0133;
+pub const WM_CTLCOLORBTN: UINT = 0x0135;
 pub const WM_CTLCOLORSTATIC: UINT = 0x0138;
-pub const WM_POWERBROADCAST: UINT = 0x0218;
+pub const WM_DROPFILES: UINT = 0x0233;
 pub const WM_DPICHANGED: UINT = 0x02E0;
 pub const WM_APP: UINT = 0x8000;
-pub const PBT_APMRESUMEAUTOMATIC: WPARAM = 0x0012;
 
-pub const VK_ESCAPE: WPARAM = 0x1B;
-pub const VK_RETURN: WPARAM = 0x0D;
+pub const ICON_SMALL: WPARAM = 0;
+pub const ICON_BIG: WPARAM = 1;
+
+pub const VK_TAB: WPARAM = 0x09;
+pub const VK_SHIFT: INT = 0x10;
 pub const VK_CONTROL: INT = 0x11;
+pub const VK_MENU: INT = 0x12;
+pub const VK_UP: WORD = 0x26;
+pub const VK_DOWN: WORD = 0x28;
+pub const VK_DELETE: WORD = 0x2E;
 
 // ShowWindow / SetWindowPos / Colors / Icons
 pub const SW_HIDE: INT = 0;
 pub const SW_SHOW: INT = 5;
 pub const SW_RESTORE: INT = 9;
 pub const HWND_BOTTOM: HWND = 1;
+pub const SWP_NOSIZE: UINT = 0x0001;
+pub const SWP_NOMOVE: UINT = 0x0002;
 pub const SWP_NOZORDER: UINT = 0x0004;
 pub const SWP_NOACTIVATE: UINT = 0x0010;
-pub const SWP_SHOWWINDOW: UINT = 0x0040;
-pub const SWP_HIDEWINDOW: UINT = 0x0080;
+pub const GWLP_USERDATA: INT = -21;
+pub const COLOR_WINDOW: INT = 5;
 pub const COLOR_BTNFACE: INT = 15;
 pub const COLOR_WINDOWTEXT: INT = 8;
 pub const TRANSPARENT: INT = 1;
+pub const OPAQUE: INT = 2;
 pub const IDI_APPLICATION: usize = 32512;
 pub const IDC_ARROW: usize = 32512;
 pub const SPI_GETNONCLIENTMETRICS: UINT = 0x0029;
@@ -193,7 +198,6 @@ pub const DEFAULT_CHARSET: DWORD = 1;
 pub const OUT_DEFAULT_PRECIS: DWORD = 0;
 pub const CLIP_DEFAULT_PRECIS: DWORD = 0;
 pub const CLEARTYPE_QUALITY: DWORD = 5;
-pub const DEFAULT_PITCH: DWORD = 0;
 pub const FIXED_PITCH: DWORD = 1;
 pub const FF_MODERN: DWORD = 3 << 4;
 
@@ -206,6 +210,10 @@ pub const MF_GRAYED: UINT = 0x0001;
 pub const MF_CHECKED: UINT = 0x0008;
 pub const MF_UNCHECKED: UINT = 0x0000;
 pub const MF_BYCOMMAND: UINT = 0x0000;
+pub const MF_BYPOSITION: UINT = 0x0400;
+pub const TPM_LEFTALIGN: UINT = 0x0000;
+pub const TPM_RIGHTBUTTON: UINT = 0x0002;
+pub const TPM_RETURNCMD: UINT = 0x0100;
 
 // MessageBox / TaskDialog
 pub const MB_OK: UINT = 0x0000_0000;
@@ -226,10 +234,15 @@ pub const TDF_CALLBACK_TIMER: INT = 0x0800;
 pub const TDF_POSITION_RELATIVE_TO_WINDOW: INT = 0x1000;
 pub const TDCBF_OK_BUTTON: INT = 0x0001;
 pub const TDCBF_CANCEL_BUTTON: INT = 0x0008;
-pub const TD_WARNING_ICON: *const u16 = (-1_isize) as *const u16;
-pub const TD_ERROR_ICON: *const u16 = (-2_isize) as *const u16;
-pub const TD_INFORMATION_ICON: *const u16 = (-3_isize) as *const u16;
-pub const TD_SHIELD_ICON: *const u16 = (-4_isize) as *const u16;
+const fn make_int_resource_w(id: i16) -> *const u16 {
+    (id as u16) as usize as *const u16
+}
+
+pub const TD_WARNING_ICON: *const u16 = make_int_resource_w(-1);
+pub const TD_ERROR_ICON: *const u16 = make_int_resource_w(-2);
+pub const TD_INFORMATION_ICON: *const u16 = make_int_resource_w(-3);
+#[cfg(test)]
+pub const TD_SHIELD_ICON: *const u16 = make_int_resource_w(-4);
 pub const TDN_CREATED: UINT = 0;
 pub const TDN_BUTTON_CLICKED: UINT = 2;
 pub const TDN_TIMER: UINT = 4;
@@ -240,10 +253,26 @@ pub const TDM_SET_ELEMENT_TEXT: UINT = 0x0400 + 108;
 pub const TDE_CONTENT: WPARAM = 0;
 pub const TDE_FOOTER: WPARAM = 2;
 
-// Common controls / DPI / Clipboard / Execution state
+// Common controls / DPI / Clipboard / Execution state / Progress / Tooltips / DWM
 pub const ICC_STANDARD_CLASSES: DWORD = 0x0000_4000;
 pub const ICC_LISTVIEW_CLASSES: DWORD = 0x0000_0001;
 pub const ICC_TAB_CLASSES: DWORD = 0x0000_0008;
+pub const ICC_PROGRESS_CLASS: DWORD = 0x0000_0020;
+pub const PBS_SMOOTH: DWORD = 0x01;
+pub const PBM_SETPOS: UINT = 0x0400 + 2;
+pub const PBM_SETRANGE32: UINT = 0x0400 + 6;
+pub const PBM_SETSTATE: UINT = 0x0400 + 16;
+pub const PBST_NORMAL: WPARAM = 0x0001;
+pub const PBST_ERROR: WPARAM = 0x0002;
+pub const PBST_PAUSED: WPARAM = 0x0003;
+pub const TTS_ALWAYSTIP: DWORD = 0x01;
+pub const TTS_NOPREFIX: DWORD = 0x02;
+pub const TTF_IDISHWND: UINT = 0x0001;
+pub const TTF_SUBCLASS: UINT = 0x0010;
+pub const TTM_SETMAXTIPWIDTH: UINT = 0x0400 + 24;
+pub const TTM_ADDTOOLW: UINT = 0x0400 + 50;
+pub const DWMWA_WINDOW_CORNER_PREFERENCE: DWORD = 33;
+pub const DWMWCP_ROUND: DWORD = 2;
 pub const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 pub const CF_UNICODETEXT: UINT = 13;
 pub const GMEM_MOVEABLE: UINT = 0x0002;
@@ -251,7 +280,6 @@ pub const ES_SYSTEM_REQUIRED: DWORD = 0x0000_0001;
 pub const ES_CONTINUOUS: DWORD = 0x8000_0000;
 
 // File / Process / JobObject / Token / Shell / Dialogs
-pub const GENERIC_READ: DWORD = 0x8000_0000;
 pub const FILE_READ_ATTRIBUTES: DWORD = 0x0080;
 pub const FILE_SHARE_READ: DWORD = 0x0000_0001;
 pub const FILE_SHARE_WRITE: DWORD = 0x0000_0002;
@@ -272,7 +300,6 @@ pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x0000_2000;
 pub const TOKEN_QUERY: DWORD = 0x0008;
 pub const TokenElevation: INT = 20;
 pub const CSTR_EQUAL: INT = 2;
-pub const NORM_IGNORECASE: DWORD = 0x0000_0001;
 
 // OpenFileName / BrowseForFolder
 pub const OFN_OVERWRITEPROMPT: DWORD = 0x0000_0002;
@@ -281,6 +308,8 @@ pub const OFN_NOCHANGEDIR: DWORD = 0x0000_0008;
 pub const BIF_RETURNONLYFSDIRS: UINT = 0x0000_0001;
 pub const BIF_NEWDIALOGSTYLE: UINT = 0x0000_0040;
 pub const BIF_EDITBOX: UINT = 0x0000_0010;
+pub const BFFM_INITIALIZED: UINT = 1;
+pub const BFFM_SETSELECTIONW: UINT = 0x0400 + 103;
 pub const COINIT_APARTMENTTHREADED: DWORD = 0x2;
 
 #[repr(C)]
@@ -297,6 +326,16 @@ pub struct RECT {
     pub top: LONG,
     pub right: LONG,
     pub bottom: LONG,
+}
+
+#[repr(C)]
+#[derive(Default)]
+pub struct LVHITTESTINFO {
+    pub pt: POINT,
+    pub flags: UINT,
+    pub iItem: INT,
+    pub iSubItem: INT,
+    pub iGroup: INT,
 }
 
 #[repr(C)]
@@ -439,6 +478,34 @@ pub struct NMLISTVIEW {
     pub lParam: LPARAM,
 }
 
+#[repr(C, packed(1))]
+#[derive(Default)]
+pub struct NMLVKEYDOWN {
+    pub hdr: NMHDR,
+    pub wVKey: WORD,
+    pub flags: UINT,
+}
+
+#[repr(C)]
+pub struct TTTOOLINFOW {
+    pub cbSize: UINT,
+    pub uFlags: UINT,
+    pub hwnd: HWND,
+    pub uId: usize,
+    pub rect: RECT,
+    pub hinst: HINSTANCE,
+    pub lpszText: *mut u16,
+    pub lParam: LPARAM,
+}
+
+impl Default for TTTOOLINFOW {
+    fn default() -> Self {
+        let mut ti: Self = unsafe { std::mem::zeroed() };
+        ti.cbSize = std::mem::size_of::<Self>() as UINT;
+        ti
+    }
+}
+
 #[repr(C)]
 pub struct TCITEMW {
     pub mask: UINT,
@@ -579,6 +646,8 @@ impl Default for OPENFILENAMEW {
     }
 }
 
+pub type BFFCALLBACK = Option<unsafe extern "system" fn(HWND, UINT, LPARAM, LPARAM) -> INT>;
+
 #[repr(C)]
 pub struct BROWSEINFOW {
     pub hwndOwner: HWND,
@@ -586,7 +655,7 @@ pub struct BROWSEINFOW {
     pub pszDisplayName: *mut u16,
     pub lpszTitle: *const u16,
     pub ulFlags: UINT,
-    pub lpfn: usize,
+    pub lpfn: BFFCALLBACK,
     pub lParam: LPARAM,
     pub iImage: INT,
 }
@@ -738,8 +807,11 @@ unsafe extern "system" {
     pub fn GetWindowTextLengthW(hWnd: HWND) -> INT;
     pub fn GetWindowTextW(hWnd: HWND, lpString: *mut u16, nMaxCount: INT) -> INT;
     pub fn EnableWindow(hWnd: HWND, bEnable: BOOL) -> BOOL;
+    pub fn IsWindowEnabled(hWnd: HWND) -> BOOL;
     pub fn SetFocus(hWnd: HWND) -> HWND;
     pub fn GetFocus() -> HWND;
+    pub fn GetWindowLongPtrW(hWnd: HWND, nIndex: INT) -> isize;
+    pub fn SetWindowLongPtrW(hWnd: HWND, nIndex: INT, dwNewLong: isize) -> isize;
     pub fn MoveWindow(
         hWnd: HWND,
         X: INT,
@@ -759,13 +831,6 @@ unsafe extern "system" {
     ) -> BOOL;
     pub fn GetClientRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
     pub fn GetWindowRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
-    pub fn AdjustWindowRectExForDpi(
-        lpRect: *mut RECT,
-        dwStyle: DWORD,
-        bMenu: BOOL,
-        dwExStyle: DWORD,
-        dpi: UINT,
-    ) -> BOOL;
     pub fn SetProcessDpiAwarenessContext(value: isize) -> BOOL;
     pub fn GetDpiForWindow(hwnd: HWND) -> UINT;
     pub fn GetDpiForSystem() -> UINT;
@@ -800,13 +865,30 @@ unsafe extern "system" {
         lpNewItem: *const u16,
     ) -> BOOL;
     pub fn SetMenu(hWnd: HWND, hMenu: HMENU) -> BOOL;
+    pub fn GetMenuItemCount(hMenu: HMENU) -> INT;
+    pub fn DeleteMenu(hMenu: HMENU, uPosition: UINT, uFlags: UINT) -> BOOL;
     pub fn EnableMenuItem(hMenu: HMENU, uIDEnableItem: UINT, uEnable: UINT) -> BOOL;
     pub fn CheckMenuItem(hMenu: HMENU, uIDCheckItem: UINT, uCheck: UINT) -> DWORD;
     pub fn DrawMenuBar(hWnd: HWND) -> BOOL;
+    pub fn TrackPopupMenu(
+        hMenu: HMENU,
+        uFlags: UINT,
+        x: INT,
+        y: INT,
+        nReserved: INT,
+        hWnd: HWND,
+        prcRect: *const RECT,
+    ) -> BOOL;
+    pub fn DestroyMenu(hMenu: HMENU) -> BOOL;
+    pub fn ClientToScreen(hWnd: HWND, lpPoint: *mut POINT) -> BOOL;
+    pub fn ScreenToClient(hWnd: HWND, lpPoint: *mut POINT) -> BOOL;
     pub fn OpenClipboard(hWndNewOwner: HWND) -> BOOL;
     pub fn EmptyClipboard() -> BOOL;
     pub fn SetClipboardData(uFormat: UINT, hMem: HANDLE) -> HANDLE;
     pub fn CloseClipboard() -> BOOL;
+    pub fn DestroyIcon(hIcon: HICON) -> BOOL;
+    pub fn PtInRect(lprc: *const RECT, pt: POINT) -> BOOL;
+    pub fn GetClassNameW(hWnd: HWND, lpClassName: *mut u16, nMaxCount: INT) -> INT;
 }
 
 #[link(name = "gdi32")]
@@ -828,8 +910,10 @@ unsafe extern "system" {
         iPitchAndFamily: DWORD,
         pszFaceName: *const u16,
     ) -> HFONT;
+    pub fn CreateSolidBrush(color: COLORREF) -> HBRUSH;
     pub fn DeleteObject(ho: HFONT) -> BOOL;
     pub fn SetBkMode(hdc: HDC, mode: INT) -> INT;
+    pub fn SetBkColor(hdc: HDC, color: COLORREF) -> COLORREF;
     pub fn SetTextColor(hdc: HDC, color: COLORREF) -> COLORREF;
 }
 
@@ -861,6 +945,36 @@ unsafe extern "system" {
     ) -> HINSTANCE;
     pub fn SHBrowseForFolderW(lpbi: *mut BROWSEINFOW) -> *mut c_void;
     pub fn SHGetPathFromIDListW(pidl: *const c_void, pszPath: *mut u16) -> BOOL;
+    pub fn DragAcceptFiles(hWnd: HWND, fAccept: BOOL);
+    pub fn DragQueryFileW(hDrop: HDROP, iFile: UINT, lpszFile: *mut u16, cch: UINT) -> UINT;
+    pub fn DragQueryPoint(hDrop: HDROP, lppt: *mut POINT) -> BOOL;
+    pub fn DragFinish(hDrop: HDROP);
+    pub fn ExtractIconExW(
+        lpszFile: *const u16,
+        nIconIndex: INT,
+        phiconLarge: *mut HICON,
+        phiconSmall: *mut HICON,
+        nIcons: UINT,
+    ) -> UINT;
+}
+
+#[link(name = "dwmapi")]
+unsafe extern "system" {
+    pub fn DwmSetWindowAttribute(
+        hwnd: HWND,
+        dwAttribute: DWORD,
+        pvAttribute: *const c_void,
+        cbAttribute: DWORD,
+    ) -> HRESULT;
+}
+
+#[link(name = "uxtheme")]
+unsafe extern "system" {
+    pub fn SetWindowTheme(
+        hwnd: HWND,
+        pszSubAppName: *const u16,
+        pszSubIdList: *const u16,
+    ) -> HRESULT;
 }
 
 #[link(name = "ole32")]
@@ -901,7 +1015,6 @@ unsafe extern "system" {
     pub fn GetModuleFileNameW(hModule: HINSTANCE, lpFilename: *mut u16, nSize: DWORD) -> DWORD;
     pub fn GetSystemDirectoryW(lpBuffer: *mut u16, uSize: UINT) -> UINT;
     pub fn GetCurrentProcess() -> HANDLE;
-    pub fn GetCurrentProcessId() -> DWORD;
     pub fn GetLastError() -> DWORD;
     pub fn CloseHandle(hObject: HANDLE) -> BOOL;
     pub fn CreateMutexW(
@@ -993,6 +1106,12 @@ unsafe extern "system" {
     pub fn GlobalFree(hMem: HGLOBAL) -> HGLOBAL;
     pub fn SetThreadExecutionState(esFlags: DWORD) -> DWORD;
     pub fn GetLocalTime(lpSystemTime: *mut SYSTEMTIME);
+    pub fn GetDiskFreeSpaceExW(
+        lpDirectoryName: *const u16,
+        lpFreeBytesAvailableToCaller: *mut u64,
+        lpTotalNumberOfBytes: *mut u64,
+        lpTotalNumberOfFreeBytes: *mut u64,
+    ) -> BOOL;
 }
 
 /// Rust文字列をNUL終端UTF-16配列へ変換する。
@@ -1032,6 +1151,54 @@ impl Drop for FontGuard {
         if self.0 != 0 {
             unsafe {
                 DeleteObject(self.0);
+            }
+        }
+    }
+}
+
+/// GDI `HBRUSH` 用 RAII ガード。
+pub struct BrushGuard(pub HBRUSH);
+
+impl Drop for BrushGuard {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            unsafe {
+                DeleteObject(self.0);
+            }
+        }
+    }
+}
+
+/// `ExtractIconExW` で取得した大小アイコン用 RAII ガード。
+pub struct IconPairGuard {
+    pub large: HICON,
+    pub small: HICON,
+}
+
+impl IconPairGuard {
+    /// System32 の `shell32.dll` から標準フォルダ/同期系アイコンを取得する。
+    pub fn load_app_icons() -> Self {
+        let mut large: HICON = 0;
+        let mut small: HICON = 0;
+        let dll_path = get_system32_dir()
+            .map(|d| d.join("shell32.dll"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("shell32.dll"));
+        let dll_w = to_wide(&dll_path.to_string_lossy());
+        unsafe {
+            ExtractIconExW(dll_w.as_ptr(), 4, &raw mut large, &raw mut small, 1);
+        }
+        Self { large, small }
+    }
+}
+
+impl Drop for IconPairGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if self.large != 0 {
+                DestroyIcon(self.large);
+            }
+            if self.small != 0 && self.small != self.large {
+                DestroyIcon(self.small);
             }
         }
     }
@@ -1103,7 +1270,7 @@ impl Drop for ExecutionStateGuard {
 
 /// System32 ディレクトリ絶対パスを取得する。
 pub fn get_system32_dir() -> Result<std::path::PathBuf, String> {
-    let mut buf = vec![0u16; 32768];
+    let mut buf = [0u16; 4096];
     let len = unsafe { GetSystemDirectoryW(buf.as_mut_ptr(), buf.len() as UINT) };
     if len == 0 || (len as usize) >= buf.len() {
         return Err("System32ディレクトリの取得に失敗しました。".to_string());
@@ -1115,7 +1282,7 @@ pub fn get_system32_dir() -> Result<std::path::PathBuf, String> {
 
 /// 自身の実行ファイル絶対パスを取得する。
 pub fn get_self_exe_path() -> Result<std::path::PathBuf, String> {
-    let mut buf = vec![0u16; 32768];
+    let mut buf = [0u16; 4096];
     let len = unsafe { GetModuleFileNameW(0, buf.as_mut_ptr(), buf.len() as DWORD) };
     if len == 0 || (len as usize) >= buf.len() {
         return Err("実行ファイルパスの取得に失敗しました。".to_string());
@@ -1176,6 +1343,45 @@ pub fn set_window_text(hwnd: HWND, text: &str) {
     }
 }
 
+/// ウィンドウのクラス名を取得する。
+pub fn get_window_class_name(hwnd: HWND) -> String {
+    if hwnd == 0 {
+        return String::new();
+    }
+    let mut buf = [0u16; 64];
+    let len = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as INT) };
+    if len <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..len as usize])
+}
+
+/// Windows 11 以降のウィンドウに角丸（DWMWA_WINDOW_CORNER_PREFERENCE）を適用する。
+pub fn apply_rounded_corners(hwnd: HWND) {
+    let pref = DWMWCP_ROUND;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&raw const pref).cast(),
+            std::mem::size_of::<DWORD>() as DWORD,
+        );
+    }
+}
+
+/// 単一行 `EDIT` コントロールへプレースホルダー（キューバナー）を設定する。
+pub fn set_cue_banner(edit_hwnd: HWND, text: &str) {
+    let w = to_wide(text);
+    unsafe {
+        SendMessageW(
+            edit_hwnd,
+            EM_SETCUEBANNER,
+            TRUE as WPARAM,
+            w.as_ptr() as LPARAM,
+        );
+    }
+}
+
 /// 現在ローカル時刻の `(YYYYMMDD_HHMMSS, YYYY-MM-DD HH:MM:SS)` タプルを返す。
 pub fn format_local_timestamps() -> (String, String) {
     let mut st = SYSTEMTIME::default();
@@ -1191,4 +1397,23 @@ pub fn format_local_timestamps() -> (String, String) {
         st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
     );
     (stamp, readable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_dialog_icons_satisfy_is_intresource_on_64bit() {
+        for (icon, expected) in [
+            (TD_WARNING_ICON, 0xFFFFusize),
+            (TD_ERROR_ICON, 0xFFFEusize),
+            (TD_INFORMATION_ICON, 0xFFFDusize),
+            (TD_SHIELD_ICON, 0xFFFCusize),
+        ] {
+            let raw = icon as usize;
+            assert_eq!(raw, expected);
+            assert_eq!(raw >> 16, 0);
+        }
+    }
 }

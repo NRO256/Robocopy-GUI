@@ -1,6 +1,6 @@
 [package]
 name = "robocopy-gui"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["NRO / Antigravity"]
 edition = "2024"
 description = "Portable Win32 GUI Wrapper for Windows robocopy.exe"

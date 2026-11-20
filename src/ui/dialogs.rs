@@ -1,9 +1,11 @@
 use std::cell::{Cell, RefCell};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::ptr::null_mut;
 use std::time::Instant;
 
 use crate::domain::exit_code::exit_code_reference_text;
+use crate::domain::validator::normalize_for_compare;
 use crate::infra::win32_ffi::*;
 
 use super::APP_VERSION;
@@ -12,29 +14,74 @@ use super::theme::ThemeFonts;
 const ID_EXEC_PROCEED: INT = 100;
 const ID_SHUTDOWN_NOW: INT = 200;
 
-/// フォルダ選択ダイアログを表示する。
-pub fn pick_folder(hwnd: HWND, title: &str) -> Option<String> {
+fn resolve_existing_dir(raw: &str) -> Option<String> {
+    let norm = normalize_for_compare(raw);
+    if norm.is_empty() {
+        return None;
+    }
+    let mut cur = PathBuf::from(&norm);
+    while !cur.exists() {
+        if !cur.pop() {
+            return None;
+        }
+    }
+    if cur.is_dir() {
+        Some(cur.to_string_lossy().to_string())
+    } else {
+        cur.parent().map(|p| p.to_string_lossy().to_string())
+    }
+}
+
+unsafe extern "system" fn browse_callback_proc(
+    hwnd: HWND,
+    msg: UINT,
+    _lparam: LPARAM,
+    lp_data: LPARAM,
+) -> INT {
+    if msg == BFFM_INITIALIZED && lp_data != 0 {
+        unsafe {
+            SendMessageW(hwnd, BFFM_SETSELECTIONW, TRUE as WPARAM, lp_data);
+        }
+    }
+    0
+}
+
+/// フォルダ選択ダイアログを表示する（`initial_path` 指定時は該当または最深親フォルダを初期選択）。
+pub fn pick_folder(hwnd: HWND, title: &str, initial_path: Option<&str>) -> Option<String> {
     let title_w = to_wide(title);
+    let init_wide = initial_path
+        .and_then(resolve_existing_dir)
+        .map(|p| to_wide(&p));
     let mut display_buf = vec![0u16; 32768];
     let mut bi = BROWSEINFOW {
         hwndOwner: hwnd,
         pszDisplayName: display_buf.as_mut_ptr(),
         lpszTitle: title_w.as_ptr(),
         ulFlags: BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_EDITBOX,
+        lpfn: if init_wide.is_some() {
+            Some(browse_callback_proc)
+        } else {
+            None
+        },
+        lParam: init_wide.as_ref().map_or(0, |w| w.as_ptr() as LPARAM),
         ..Default::default()
     };
 
     unsafe {
-        let _ = CoInitializeEx(null_mut(), COINIT_APARTMENTTHREADED);
+        let co_hr = CoInitializeEx(null_mut(), COINIT_APARTMENTTHREADED);
         let pidl = SHBrowseForFolderW(&raw mut bi);
         if pidl.is_null() {
-            CoUninitialize();
+            if co_hr >= 0 {
+                CoUninitialize();
+            }
             return None;
         }
         let mut path_buf = vec![0u16; 32768];
         let ok = SHGetPathFromIDListW(pidl, path_buf.as_mut_ptr());
         CoTaskMemFree(pidl);
-        CoUninitialize();
+        if co_hr >= 0 {
+            CoUninitialize();
+        }
         if ok == 0 {
             return None;
         }
@@ -272,73 +319,76 @@ unsafe extern "system" fn shutdown_td_callback(
     _lparam: LPARAM,
     lp_ref_data: isize,
 ) -> HRESULT {
-    let ctx = unsafe { &mut *(lp_ref_data as *mut ShutdownCountdownCtx) };
-    match msg {
-        TDN_CREATED => {
-            let range = ((ctx.total_secs as usize) << 16) as LPARAM;
-            unsafe {
-                SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_RANGE, 0, range);
-                SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_POS, ctx.total_secs as WPARAM, 0);
+    catch_unwind(AssertUnwindSafe(|| {
+        let ctx = unsafe { &mut *(lp_ref_data as *mut ShutdownCountdownCtx) };
+        match msg {
+            TDN_CREATED => {
+                let range = ((ctx.total_secs as usize) << 16) as LPARAM;
+                unsafe {
+                    SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_RANGE, 0, range);
+                    SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_POS, ctx.total_secs as WPARAM, 0);
+                }
             }
-        }
-        TDN_TIMER => {
-            let now = Instant::now();
-            // スリープ復帰等でタイマー間隔が大きく飛んだ場合は安全のため自動中止する。
-            if now.duration_since(ctx.last_tick_at).as_secs() > 5 {
-                ctx.cancelled_by_sleep_jump = true;
-                unsafe {
-                    SendMessageW(hwnd, TDM_CLICK_BUTTON, IDCANCEL as WPARAM, 0);
+            TDN_TIMER => {
+                let now = Instant::now();
+                // スリープ復帰等でタイマー間隔が大きく飛んだ場合は安全のため自動中止する。
+                if now.duration_since(ctx.last_tick_at).as_secs() > 5 {
+                    ctx.cancelled_by_sleep_jump = true;
+                    unsafe {
+                        SendMessageW(hwnd, TDM_CLICK_BUTTON, IDCANCEL as WPARAM, 0);
+                    }
+                    return 0;
                 }
-                return 0;
-            }
-            ctx.last_tick_at = now;
+                ctx.last_tick_at = now;
 
-            let elapsed = now.duration_since(ctx.started_at).as_secs();
-            let remaining = ctx.total_secs.saturating_sub(elapsed);
+                let elapsed = now.duration_since(ctx.started_at).as_secs();
+                let remaining = ctx.total_secs.saturating_sub(elapsed);
 
-            if remaining != ctx.last_announced_sec {
-                ctx.last_announced_sec = remaining;
-                unsafe {
-                    SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_POS, remaining as WPARAM, 0);
-                }
-                let footer_str =
-                    format!("残り {remaining} 秒でシャットダウンを実行します（Esc で中止）");
-                let footer_w = to_wide(&footer_str);
-                unsafe {
-                    SendMessageW(
-                        hwnd,
-                        TDM_SET_ELEMENT_TEXT,
-                        TDE_FOOTER,
-                        footer_w.as_ptr() as LPARAM,
-                    );
-                }
-                // NVDA読み上げ阻害を防ぐため、本文テキスト自体は開始・30秒・10秒の節目のみ更新する。
-                if matches!(remaining, 30 | 10 | 5) {
-                    let body = format!(
-                        "バックアップが正常に完了し、ログを保存しました。\n残り {remaining} 秒でPCをシャットダウンします。\n中止するには Esc キーまたは「シャットダウンを中止」を押してください。"
-                    );
-                    let body_w = to_wide(&body);
+                if remaining != ctx.last_announced_sec {
+                    ctx.last_announced_sec = remaining;
+                    unsafe {
+                        SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_POS, remaining as WPARAM, 0);
+                    }
+                    let footer_str =
+                        format!("残り {remaining} 秒でシャットダウンを実行します（Esc で中止）");
+                    let footer_w = to_wide(&footer_str);
                     unsafe {
                         SendMessageW(
                             hwnd,
                             TDM_SET_ELEMENT_TEXT,
-                            TDE_CONTENT,
-                            body_w.as_ptr() as LPARAM,
+                            TDE_FOOTER,
+                            footer_w.as_ptr() as LPARAM,
                         );
+                    }
+                    // NVDA読み上げ阻害を防ぐため、本文テキスト自体は開始・30秒・10秒の節目のみ更新する。
+                    if matches!(remaining, 30 | 10 | 5) {
+                        let body = format!(
+                            "バックアップが正常に完了し、ログを保存しました。\n残り {remaining} 秒でPCをシャットダウンします。\n中止するには Esc キーまたは「シャットダウンを中止」を押してください。"
+                        );
+                        let body_w = to_wide(&body);
+                        unsafe {
+                            SendMessageW(
+                                hwnd,
+                                TDM_SET_ELEMENT_TEXT,
+                                TDE_CONTENT,
+                                body_w.as_ptr() as LPARAM,
+                            );
+                        }
+                    }
+                }
+
+                if remaining == 0 {
+                    unsafe {
+                        SendMessageW(hwnd, TDM_CLICK_BUTTON, ID_SHUTDOWN_NOW as WPARAM, 0);
                     }
                 }
             }
-
-            if remaining == 0 {
-                unsafe {
-                    SendMessageW(hwnd, TDM_CLICK_BUTTON, ID_SHUTDOWN_NOW as WPARAM, 0);
-                }
-            }
+            TDN_BUTTON_CLICKED => {}
+            _ => {}
         }
-        TDN_BUTTON_CLICKED => {}
-        _ => {}
-    }
-    0
+        0
+    }))
+    .unwrap_or(0)
 }
 
 /// 60秒カウントダウン付きシャットダウン確認モーダル（中止またはスリープ検知時は false）。
@@ -422,58 +472,50 @@ unsafe extern "system" fn prompt_wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    match msg {
-        WM_COMMAND => {
-            let id = wparam & 0xFFFF;
-            let state_ptr = unsafe { get_window_long_ptr(hwnd) } as *const PromptDialogState;
-            if !state_ptr.is_null() {
-                let state = unsafe { &*state_ptr };
-                if id == IDOK as usize {
-                    let txt = get_window_text(state.edit_hwnd);
-                    *state.result.borrow_mut() = Some(txt);
-                    state.done.set(true);
-                    unsafe { DestroyWindow(hwnd) };
-                    return 0;
-                } else if id == IDCANCEL as usize {
-                    *state.result.borrow_mut() = None;
-                    state.done.set(true);
-                    unsafe { DestroyWindow(hwnd) };
-                    return 0;
+    catch_unwind(AssertUnwindSafe(|| {
+        match msg {
+            WM_COMMAND => {
+                let id = wparam & 0xFFFF;
+                let state_ptr =
+                    unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const PromptDialogState;
+                if !state_ptr.is_null() {
+                    let state = unsafe { &*state_ptr };
+                    if id == IDOK as usize {
+                        let txt = get_window_text(state.edit_hwnd);
+                        *state.result.borrow_mut() = Some(txt);
+                        state.done.set(true);
+                        return 0;
+                    } else if id == IDCANCEL as usize {
+                        *state.result.borrow_mut() = None;
+                        state.done.set(true);
+                        return 0;
+                    }
                 }
             }
-        }
-        WM_CLOSE => {
-            let state_ptr = unsafe { get_window_long_ptr(hwnd) } as *const PromptDialogState;
-            if !state_ptr.is_null() {
-                let state = unsafe { &*state_ptr };
-                *state.result.borrow_mut() = None;
-                state.done.set(true);
+            WM_CLOSE => {
+                let state_ptr =
+                    unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const PromptDialogState;
+                if !state_ptr.is_null() {
+                    let state = unsafe { &*state_ptr };
+                    *state.result.borrow_mut() = None;
+                    state.done.set(true);
+                }
+                return 0;
             }
-            unsafe { DestroyWindow(hwnd) };
-            return 0;
+            WM_DESTROY => {
+                let state_ptr =
+                    unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const PromptDialogState;
+                if !state_ptr.is_null() {
+                    let state = unsafe { &*state_ptr };
+                    state.done.set(true);
+                }
+                return 0;
+            }
+            _ => {}
         }
-        _ => {}
-    }
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-}
-
-#[cfg(target_pointer_width = "64")]
-#[link(name = "user32")]
-unsafe extern "system" {
-    #[link_name = "GetWindowLongPtrW"]
-    fn GetWindowLongPtrW_sys(hWnd: HWND, nIndex: INT) -> isize;
-    #[link_name = "SetWindowLongPtrW"]
-    fn SetWindowLongPtrW_sys(hWnd: HWND, nIndex: INT, dwNewLong: isize) -> isize;
-}
-
-unsafe fn get_window_long_ptr(hwnd: HWND) -> isize {
-    unsafe { GetWindowLongPtrW_sys(hwnd, -21) } // GWLP_USERDATA
-}
-
-unsafe fn set_window_long_ptr(hwnd: HWND, val: isize) {
-    unsafe {
-        SetWindowLongPtrW_sys(hwnd, -21, val);
-    }
+        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }))
+    .unwrap_or(0)
 }
 
 /// プリセット新規保存用のモーダルテキスト入力ダイアログ。
@@ -522,6 +564,7 @@ pub fn prompt_preset_name(parent: HWND, initial: &str) -> Option<String> {
     if dlg == 0 {
         return None;
     }
+    apply_rounded_corners(dlg);
 
     let static_cls = to_wide("STATIC");
     let edit_cls = to_wide("EDIT");
@@ -608,7 +651,7 @@ pub fn prompt_preset_name(parent: HWND, initial: &str) -> Option<String> {
         done: Cell::new(false),
     };
     unsafe {
-        set_window_long_ptr(dlg, (&raw const state) as isize);
+        SetWindowLongPtrW(dlg, GWLP_USERDATA, (&raw const state) as isize);
         EnableWindow(parent, FALSE);
         ShowWindow(dlg, SW_SHOW);
         SetFocus(edit);
@@ -618,7 +661,13 @@ pub fn prompt_preset_name(parent: HWND, initial: &str) -> Option<String> {
     let mut msg = MSG::default();
     while !state.done.get() {
         let gm = unsafe { GetMessageW(&raw mut msg, 0, 0, 0) };
-        if gm <= 0 {
+        if gm == 0 {
+            unsafe {
+                PostQuitMessage(msg.wParam as INT);
+            }
+            break;
+        }
+        if gm < 0 {
             break;
         }
         if unsafe { IsDialogMessageW(dlg, &raw const msg) } == 0 {
@@ -631,6 +680,8 @@ pub fn prompt_preset_name(parent: HWND, initial: &str) -> Option<String> {
 
     unsafe {
         EnableWindow(parent, TRUE);
+        SetWindowLongPtrW(dlg, GWLP_USERDATA, 0);
+        DestroyWindow(dlg);
         SetForegroundWindow(parent);
     }
     state.result.into_inner()

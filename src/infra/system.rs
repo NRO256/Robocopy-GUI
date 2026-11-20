@@ -124,8 +124,8 @@ impl PathInspector for Win32PathInspector {
             }
         }
 
-        let mut base =
-            resolved_base.unwrap_or_else(|| Self::expand_mapped_drive_if_needed(&cleaned));
+        let base_candidate = resolved_base.unwrap_or(cleaned);
+        let mut base = Self::expand_mapped_drive_if_needed(&base_candidate);
         if tail_parts.is_empty() {
             return Ok(normalize_for_compare(&base));
         }
@@ -148,17 +148,18 @@ impl PathInspector for Win32PathInspector {
     fn is_ancestor_ci(&self, ancestor: &str, child: &str) -> bool {
         let anc = normalize_for_compare(ancestor);
         let ch = normalize_for_compare(child);
-        if anc.is_empty() || ch.is_empty() || Self::compare_ordinal_ci(&anc, &ch) {
+        if anc.is_empty() || ch.is_empty() {
             return false;
         }
-        let prefix = if anc.ends_with('\\') {
-            anc
+        let prefix_utf16: Vec<u16> = if anc.ends_with('\\') {
+            anc.encode_utf16().collect()
         } else {
-            format!("{anc}\\")
+            anc.encode_utf16()
+                .chain(std::iter::once(b'\\' as u16))
+                .collect()
         };
-        let prefix_utf16: Vec<u16> = prefix.encode_utf16().collect();
-        let ch_utf16: Vec<u16> = ch.encode_utf16().collect();
-        if ch_utf16.len() < prefix_utf16.len() {
+        let ch_utf16: Vec<u16> = ch.encode_utf16().take(prefix_utf16.len() + 1).collect();
+        if ch_utf16.len() <= prefix_utf16.len() {
             return false;
         }
         let res = unsafe {
@@ -268,4 +269,199 @@ pub fn execute_system_shutdown() -> Result<(), String> {
         .map_err(|e| format!("shutdown.exe の起動に失敗しました: {e}"))?;
     let _ = status;
     Ok(())
+}
+
+/// 指定パス（または存在する最深親ディレクトリ）のディスク空き容量と総容量 `(free_bytes, total_bytes)` を取得する。
+pub fn query_disk_space_summary(raw_path: &str) -> Option<(u64, u64)> {
+    let norm = normalize_for_compare(raw_path);
+    if norm.is_empty() {
+        return None;
+    }
+    let mut cur = PathBuf::from(&norm);
+    loop {
+        if cur.exists() {
+            let target = if cur.is_dir() {
+                cur
+            } else {
+                cur.parent()?.to_path_buf()
+            };
+            let w = to_wide(&target.to_string_lossy());
+            let mut free_avail: u64 = 0;
+            let mut total: u64 = 0;
+            let mut total_free: u64 = 0;
+            let ok = unsafe {
+                GetDiskFreeSpaceExW(
+                    w.as_ptr(),
+                    &raw mut free_avail,
+                    &raw mut total,
+                    &raw mut total_free,
+                )
+            };
+            if ok != 0 && total > 0 {
+                return Some((free_avail, total));
+            }
+            return None;
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
+/// バイト数を人間が読みやすい単位文字列へ整形する。
+pub fn format_bytes_human(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    const TB: f64 = GB * 1024.0;
+    let b = bytes as f64;
+    if b >= TB {
+        format!("{:.2} TB", b / TB)
+    } else if b >= GB {
+        format!("{:.1} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.1} MB", b / MB)
+    } else {
+        format!("{} KB", bytes / 1024)
+    }
+}
+
+/// コピー元・コピー先パスの実在確認と空き容量サマリー文字列を返す（第2要素は警告表示フラグ）。
+pub fn describe_paths_status(source: &str, destination: &str) -> (String, bool) {
+    let src_trim = source.trim();
+    let dst_trim = destination.trim();
+    if src_trim.is_empty() && dst_trim.is_empty() {
+        return (
+            "ヒント: エクスプローラーからフォルダをドラッグ＆ドロップして指定できます".to_string(),
+            false,
+        );
+    }
+
+    let (src_msg, src_warn) = if src_trim.is_empty() {
+        ("コピー元: 未指定".to_string(), false)
+    } else {
+        let norm = normalize_for_compare(src_trim);
+        let p = Path::new(&norm);
+        if p.exists() && p.is_dir() {
+            ("コピー元: 確認OK".to_string(), false)
+        } else if p.exists() {
+            ("コピー元: フォルダではありません".to_string(), true)
+        } else {
+            ("コピー元: 見つかりません".to_string(), true)
+        }
+    };
+
+    let (dst_msg, dst_warn) = if dst_trim.is_empty() {
+        ("コピー先: 未指定".to_string(), false)
+    } else {
+        let norm = normalize_for_compare(dst_trim);
+        let p = Path::new(&norm);
+        let (state, state_warn) = if p.exists() && p.is_dir() {
+            ("既存フォルダ", false)
+        } else if p.exists() {
+            ("フォルダと同名のファイルあり", true)
+        } else {
+            ("新規作成予定", false)
+        };
+        if let Some((free, total)) = query_disk_space_summary(dst_trim) {
+            (
+                format!(
+                    "コピー先: {state} (空き {} / {})",
+                    format_bytes_human(free),
+                    format_bytes_human(total)
+                ),
+                state_warn,
+            )
+        } else {
+            (format!("コピー先: {state} (容量取得不可)"), true)
+        }
+    };
+
+    (format!("{src_msg} | {dst_msg}"), src_warn || dst_warn)
+}
+
+/// 指定パス（未存在時は存在する最深親ディレクトリ）をエクスプローラーで開く。
+pub fn open_folder_or_parent_in_explorer(hwnd: HWND, raw_path: &str) -> Result<(), String> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return Err("パスが入力されていません。".to_string());
+    }
+    let norm = normalize_for_compare(trimmed);
+    let mut cur = PathBuf::from(&norm);
+    while !cur.exists() {
+        if !cur.pop() {
+            return Err(format!("開けるフォルダが見つかりません: {norm}"));
+        }
+    }
+    let target = if cur.is_dir() {
+        cur
+    } else {
+        cur.parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| format!("親フォルダが見つかりません: {norm}"))?
+    };
+
+    let op_w = to_wide("open");
+    let path_w = to_wide(&target.to_string_lossy());
+    let res = unsafe {
+        ShellExecuteW(
+            hwnd,
+            op_w.as_ptr(),
+            path_w.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOW,
+        )
+    };
+    if res <= 32 {
+        return Err(format!(
+            "エクスプローラーでフォルダを開けませんでした: {}",
+            target.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn format_bytes_human_formats_all_units() {
+        assert_eq!(format_bytes_human(512 * 1024), "512 KB");
+        assert_eq!(format_bytes_human(2 * 1024 * 1024), "2.0 MB");
+        assert_eq!(format_bytes_human(5 * 1024 * 1024 * 1024), "5.0 GB");
+        assert_eq!(format_bytes_human(3 * 1024_u64.pow(4) / 2), "1.50 TB");
+    }
+
+    #[test]
+    fn describe_paths_status_reports_empty_missing_and_valid_paths() {
+        let (empty_msg, empty_warn) = describe_paths_status("", "");
+        assert!(!empty_warn);
+        assert!(empty_msg.contains("ドラッグ＆ドロップ"));
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("rc_sys_test_{nanos}"));
+        let src = base.join("src");
+        let dst = base.join("dst_new");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let (ok_msg, ok_warn) =
+            describe_paths_status(&src.to_string_lossy(), &dst.to_string_lossy());
+        assert!(!ok_warn);
+        assert!(ok_msg.contains("コピー元: 確認OK"));
+        assert!(ok_msg.contains("コピー先: 新規作成予定"));
+        assert!(ok_msg.contains("空き "));
+
+        let missing = base.join("missing_dir");
+        let (miss_msg, miss_warn) = describe_paths_status(&missing.to_string_lossy(), "");
+        assert!(miss_warn);
+        assert!(miss_msg.contains("コピー元: 見つかりません"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

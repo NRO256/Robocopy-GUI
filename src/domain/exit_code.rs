@@ -7,7 +7,6 @@ pub struct ExitCodeSummary {
     pub is_success: bool,
     pub is_warning: bool,
     pub summary_ja: String,
-    pub detail_parts: Vec<&'static str>,
 }
 
 /// 終了コードをビットマスク規約に従って解析する。
@@ -18,11 +17,10 @@ pub fn classify_exit_code(code: u32) -> ExitCodeSummary {
             is_success: true,
             is_warning: false,
             summary_ja: "変更なし（コピー元・先が完全一致）".to_string(),
-            detail_parts: vec!["0: コピー対象なし（変更不要）"],
         };
     }
 
-    let mut parts = Vec::new();
+    let mut parts = Vec::with_capacity(6);
     if code & 1 != 0 {
         parts.push("1: ファイルのコピー成功");
     }
@@ -57,7 +55,6 @@ pub fn classify_exit_code(code: u32) -> ExitCodeSummary {
         is_success: !is_failure,
         is_warning,
         summary_ja,
-        detail_parts: parts,
     }
 }
 
@@ -76,12 +73,7 @@ pub fn outcome_from_exit_code(code: u32) -> JobOutcome {
 /// 実行計画全体の集計結果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanSummary {
-    pub total_jobs: usize,
-    pub executed_jobs: usize,
-    pub succeeded_jobs: usize,
-    pub warning_jobs: usize,
     pub failed_jobs: usize,
-    pub cancelled: bool,
     pub max_exit_code: u32,
     pub allow_shutdown: bool,
     pub summary_line: String,
@@ -157,12 +149,7 @@ pub fn summarize_plan(
     };
 
     PlanSummary {
-        total_jobs,
-        executed_jobs: outcomes.len(),
-        succeeded_jobs: succeeded,
-        warning_jobs: warnings,
         failed_jobs: failed,
-        cancelled,
         max_exit_code: max_code,
         allow_shutdown,
         summary_line,
