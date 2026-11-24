@@ -1,9 +1,9 @@
 # Robocopy-GUI
 
-- バージョン: v0.2.0
+- バージョン: v0.2.1
 - 対象OS: Windows 11 (64bit)
 - 種別・ライセンス: フリーウェア / オープンソースソフトウェア（MIT License）
-- 実行ファイル: `Robocopy-GUI.exe`（単一実行ファイル、487,424 バイト / 約 476 KB、レジストリ不使用）
+- 実行ファイル: `Robocopy-GUI.exe`（単一実行ファイル、495,616 バイト / 約 484 KB、レジストリ不使用）
 - 作成者: NRO / Antigravity
 - リポジトリ: https://github.com/NRO256/Robocopy-GUI
 - ダウンロード: https://github.com/NRO256/Robocopy-GUI/releases
@@ -78,7 +78,7 @@ Robocopy-GUI は、Windows 11 標準の高速・高信頼ファイルコピー�
 
 ### 導入手順
 
-1. GitHub Releases（https://github.com/NRO256/Robocopy-GUI/releases）から `Robocopy-GUI-v0.2.0-win.zip` をダウンロードします。
+1. GitHub Releases（https://github.com/NRO256/Robocopy-GUI/releases）から `Robocopy-GUI-v0.2.1-win.zip` をダウンロードします。
 2. ダウンロードした ZIP ファイルを任意の書き込み可能なフォルダへ展開します。
 3. 展開先フォルダ内の `Robocopy-GUI.exe` を起動します。初回起動時に Windows Defender SmartScreen（「WindowsによってPCが保護されました」）が表示された場合は、「詳細情報」をクリックして「実行」を選択してください。
 
