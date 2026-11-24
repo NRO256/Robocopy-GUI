@@ -13,7 +13,7 @@ use crate::infra::win32_ffi::*;
 use window::{APP_STATE, main_wnd_proc};
 
 pub const WINDOW_CLASS_NAME: &str = "RobocopyGuiMainWindowClass";
-pub const APP_VERSION: &str = "0.2.0";
+pub const APP_VERSION: &str = "0.2.1";
 
 pub fn run_gui(handoff_path: Option<std::path::PathBuf>, is_restarted: bool) -> Result<(), String> {
     let is_handoff = is_restarted || handoff_path.is_some();

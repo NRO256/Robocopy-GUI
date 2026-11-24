@@ -17,8 +17,8 @@ use crate::infra::system::{
 use crate::infra::win32_ffi::*;
 
 use super::dialogs::{
-    confirm_pre_execution, confirm_yes_no, pick_folder, pick_save_bat_path, prompt_preset_name,
-    show_about_dialog, show_error_box, show_exit_code_help, show_info_box,
+    ShutdownDialogOutcome, confirm_pre_execution, confirm_yes_no, pick_folder, pick_save_bat_path,
+    prompt_preset_name, show_about_dialog, show_error_box, show_exit_code_help, show_info_box,
     show_shutdown_countdown_dialog, show_warning_box,
 };
 use super::menu::*;
@@ -2860,17 +2860,44 @@ fn handle_runner_notify(hwnd: HWND) {
             with_state(|state| {
                 let _ = save_config(&state.paths.config_path, &state.config);
             });
-            if show_shutdown_countdown_dialog(hwnd) {
-                if let Err(err) = execute_system_shutdown() {
-                    show_error_box(hwnd, "シャットダウン失敗", &err);
+            match show_shutdown_countdown_dialog(hwnd) {
+                ShutdownDialogOutcome::Proceed => {
+                    with_ui(|h| {
+                        append_log_lines(
+                            h.edit_log,
+                            &["[通知] PCのシャットダウンを実行します。".to_string()],
+                        );
+                    });
+                    if let Err(err) = execute_system_shutdown() {
+                        with_ui(|h| {
+                            append_log_lines(
+                                h.edit_log,
+                                &[format!("[エラー] シャットダウン失敗: {err}")],
+                            );
+                        });
+                        show_error_box(hwnd, "シャットダウン失敗", &err);
+                    } else {
+                        unsafe {
+                            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                        }
+                    }
                 }
-            } else {
-                with_ui(|h| {
-                    append_log_lines(
-                        h.edit_log,
-                        &["[通知] シャットダウンはキャンセルされました。".to_string()],
-                    );
-                });
+                ShutdownDialogOutcome::CancelledByUser => {
+                    with_ui(|h| {
+                        append_log_lines(
+                            h.edit_log,
+                            &["[通知] シャットダウンはキャンセルされました。".to_string()],
+                        );
+                    });
+                }
+                ShutdownDialogOutcome::CancelledBySleepJump => {
+                    with_ui(|h| {
+                        append_log_lines(
+                            h.edit_log,
+                            &["[通知] スリープ復帰または長時間停止を検知したため、シャットダウンを自動中止しました。".to_string()],
+                        );
+                    });
+                }
             }
         } else if report.summary.failed_jobs > 0 {
             show_error_box(
@@ -3708,7 +3735,14 @@ fn handle_queue_context_menu(hwnd: HWND, target: HWND, lparam: LPARAM) {
     }
 }
 
+fn sync_shutdown_checkbox_to_state() {
+    with_ui_and_state_mut(|h, s| {
+        s.shutdown_after_completion = is_checked(h.chk_shutdown);
+    });
+}
+
 fn handle_start_queue_item_execution(hwnd: HWND, is_dry_run: bool) {
+    sync_shutdown_checkbox_to_state();
     let Some(idx) = with_ui(|h| selected_queue_index(h.lv_queue)).flatten() else {
         return;
     };
@@ -3721,6 +3755,7 @@ fn handle_start_queue_item_execution(hwnd: HWND, is_dry_run: bool) {
 }
 
 fn handle_start_execution(hwnd: HWND, is_queue: bool, is_dry_run: bool) {
+    sync_shutdown_checkbox_to_state();
     let Some((plan, validation)) = with_state(|s| s.prepare_plan(is_queue, is_dry_run)) else {
         return;
     };

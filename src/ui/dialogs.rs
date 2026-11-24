@@ -304,12 +304,23 @@ pub fn confirm_pre_execution(
     chosen == ID_EXEC_PROCEED
 }
 
+/// シャットダウンカウントダウンダイアログの終了結果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownDialogOutcome {
+    Proceed,
+    CancelledByUser,
+    CancelledBySleepJump,
+}
+
+const SLEEP_JUMP_THRESHOLD_SECS: u64 = 15;
+
 struct ShutdownCountdownCtx {
     started_at: Instant,
     last_tick_at: Instant,
     total_secs: u64,
     last_announced_sec: u64,
     cancelled_by_sleep_jump: bool,
+    auto_clicked: bool,
 }
 
 unsafe extern "system" fn shutdown_td_callback(
@@ -323,6 +334,7 @@ unsafe extern "system" fn shutdown_td_callback(
         let ctx = unsafe { &mut *(lp_ref_data as *mut ShutdownCountdownCtx) };
         match msg {
             TDN_CREATED => {
+                ctx.last_tick_at = Instant::now();
                 let range = ((ctx.total_secs as usize) << 16) as LPARAM;
                 unsafe {
                     SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_RANGE, 0, range);
@@ -332,10 +344,13 @@ unsafe extern "system" fn shutdown_td_callback(
             TDN_TIMER => {
                 let now = Instant::now();
                 // スリープ復帰等でタイマー間隔が大きく飛んだ場合は安全のため自動中止する。
-                if now.duration_since(ctx.last_tick_at).as_secs() > 5 {
-                    ctx.cancelled_by_sleep_jump = true;
-                    unsafe {
-                        SendMessageW(hwnd, TDM_CLICK_BUTTON, IDCANCEL as WPARAM, 0);
+                if now.duration_since(ctx.last_tick_at).as_secs() > SLEEP_JUMP_THRESHOLD_SECS {
+                    if !ctx.auto_clicked {
+                        ctx.auto_clicked = true;
+                        ctx.cancelled_by_sleep_jump = true;
+                        unsafe {
+                            SendMessageW(hwnd, TDM_CLICK_BUTTON, IDCANCEL as WPARAM, 0);
+                        }
                     }
                     return 0;
                 }
@@ -377,7 +392,8 @@ unsafe extern "system" fn shutdown_td_callback(
                     }
                 }
 
-                if remaining == 0 {
+                if remaining == 0 && !ctx.auto_clicked {
+                    ctx.auto_clicked = true;
                     unsafe {
                         SendMessageW(hwnd, TDM_CLICK_BUTTON, ID_SHUTDOWN_NOW as WPARAM, 0);
                     }
@@ -391,8 +407,8 @@ unsafe extern "system" fn shutdown_td_callback(
     .unwrap_or(0)
 }
 
-/// 60秒カウントダウン付きシャットダウン確認モーダル（中止またはスリープ検知時は false）。
-pub fn show_shutdown_countdown_dialog(hwnd: HWND) -> bool {
+/// 60秒カウントダウン付きシャットダウン確認モーダル。
+pub fn show_shutdown_countdown_dialog(hwnd: HWND) -> ShutdownDialogOutcome {
     unsafe {
         if IsIconic(hwnd) != 0 {
             ShowWindow(hwnd, SW_RESTORE);
@@ -407,6 +423,7 @@ pub fn show_shutdown_countdown_dialog(hwnd: HWND) -> bool {
         total_secs: 60,
         last_announced_sec: 60,
         cancelled_by_sleep_jump: false,
+        auto_clicked: false,
     };
 
     let title_w = to_wide("バックアップ完了 - シャットダウン確認");
@@ -451,10 +468,13 @@ pub fn show_shutdown_countdown_dialog(hwnd: HWND) -> bool {
 
     let mut chosen = IDCANCEL;
     let hr = unsafe { TaskDialogIndirect(&raw const cfg, &raw mut chosen, null_mut(), null_mut()) };
-    if hr != 0 || ctx.cancelled_by_sleep_jump {
-        return false;
+    if ctx.cancelled_by_sleep_jump {
+        return ShutdownDialogOutcome::CancelledBySleepJump;
     }
-    chosen == ID_SHUTDOWN_NOW
+    if hr != 0 || chosen != ID_SHUTDOWN_NOW {
+        return ShutdownDialogOutcome::CancelledByUser;
+    }
+    ShutdownDialogOutcome::Proceed
 }
 
 const INPUT_CLASS_NAME: &str = "RobocopyGuiPromptInputClass";

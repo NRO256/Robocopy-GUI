@@ -468,33 +468,6 @@ fn poll_unilog_lines(
     decoder.push_bytes(read_buf)
 }
 
-fn decode_acp_or_utf8(bytes: &[u8]) -> String {
-    if let Ok(s) = std::str::from_utf8(bytes) {
-        return s.to_string();
-    }
-    let needed = unsafe {
-        MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), bytes.len() as INT, null_mut(), 0)
-    };
-    if needed <= 0 {
-        return String::from_utf8_lossy(bytes).to_string();
-    }
-    let mut wide = vec![0u16; needed as usize];
-    let written = unsafe {
-        MultiByteToWideChar(
-            CP_ACP,
-            0,
-            bytes.as_ptr(),
-            bytes.len() as INT,
-            wide.as_mut_ptr(),
-            needed,
-        )
-    };
-    if written <= 0 {
-        return String::from_utf8_lossy(bytes).to_string();
-    }
-    String::from_utf16_lossy(&wide[..written as usize])
-}
-
 struct TempFileGuard(PathBuf);
 
 impl Drop for TempFileGuard {

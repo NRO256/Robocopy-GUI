@@ -1,3 +1,4 @@
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 
@@ -259,15 +260,38 @@ pub fn restart_as_admin(hwnd: HWND, handoff_path: Option<&Path>) -> Result<(), S
     Ok(())
 }
 
+fn format_shutdown_failure(code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> String {
+    let err_msg = decode_acp_or_utf8(stderr).trim().to_string();
+    let out_msg = decode_acp_or_utf8(stdout).trim().to_string();
+    let detail = if !err_msg.is_empty() {
+        err_msg
+    } else {
+        out_msg
+    };
+    match (code, detail.is_empty()) {
+        (Some(c), false) => format!("shutdown.exe が失敗しました (終了コード={c}): {detail}"),
+        (Some(c), true) => format!("shutdown.exe が失敗しました (終了コード={c})。"),
+        (None, false) => format!("shutdown.exe が異常終了しました: {detail}"),
+        (None, true) => "shutdown.exe が異常終了しました。".to_string(),
+    }
+}
+
 /// System32 配下の `shutdown.exe /s /t 0` を実行してPCをシャットダウンする（`/f` は使用しない）。
 pub fn execute_system_shutdown() -> Result<(), String> {
     let sys32 = get_system32_dir()?;
     let shutdown_exe = sys32.join("shutdown.exe");
-    let status = std::process::Command::new(&shutdown_exe)
+    let output = std::process::Command::new(&shutdown_exe)
         .args(["/s", "/t", "0"])
-        .spawn()
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
         .map_err(|e| format!("shutdown.exe の起動に失敗しました: {e}"))?;
-    let _ = status;
+    if !output.status.success() {
+        return Err(format_shutdown_failure(
+            output.status.code(),
+            &output.stdout,
+            &output.stderr,
+        ));
+    }
     Ok(())
 }
 
@@ -463,5 +487,19 @@ mod tests {
         assert!(miss_msg.contains("コピー元: 見つかりません"));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn format_shutdown_failure_reports_code_and_detail() {
+        let msg = format_shutdown_failure(
+            Some(1190),
+            b"",
+            b"A system shutdown has already been scheduled.\r\n",
+        );
+        assert!(msg.contains("1190"));
+        assert!(msg.contains("already been scheduled"));
+
+        let msg_no_detail = format_shutdown_failure(Some(5), b"", b"");
+        assert!(msg_no_detail.contains("5"));
     }
 }
